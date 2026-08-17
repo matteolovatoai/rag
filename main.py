@@ -1,13 +1,15 @@
 import os
 
-from langchain_ollama import OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaLLM
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_classic.chains import create_retrieval_chain
+
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
+
+from langchain_classic.chains import create_retrieval_chain, create_history_aware_retriever
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 
 def main():
@@ -34,26 +36,47 @@ def main():
     print("Searching...")
     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
     print("Configuring the LLM...")
-    llm = OllamaLLM(model="qwen2.5:3b")
+    llm = ChatOllama(model="qwen2.5:3b")
 
-    system_prompt = (
-        "Sei un assistente utile ed esperto. Usa SOLO il seguente contesto per rispondere alla domanda. "
-        "Se non conosci la risposta in base al contesto, dì semplicemente che non lo sai, non inventare nulla.\n\n"
-        "Contesto: {context}"
+    contextualize_q_system_prompt = (
+        "Data la cronologia della chat e l'ultima domanda dell'utente "
+        "che potrebbe fare riferimento al contesto nella cronologia della chat, "
+        "formula una domanda indipendente che possa essere compresa "
+        "senza la cronologia. NON rispondere alla domanda, riformulala solo se necessario."
     )
 
-    prompt = ChatPromptTemplate.from_messages([
+    contextualize_q_prompt = ChatPromptTemplate.from_messages([
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder("chat_history"),
+        ("human", "{input}"),
+    ])
+
+    history_aware_retriever = create_history_aware_retriever(
+        llm, retriever, contextualize_q_prompt
+    )
+
+    system_prompt = (
+            "Sei un assistente utile ed esperto. Usa SOLO il seguente contesto per rispondere alla domanda. "
+            "Se non conosci la risposta in base al contesto, dì semplicemente che non lo sai, non inventare nulla.\n\n"
+            "Contesto: {context}"
+        )
+
+    qa_prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
+        MessagesPlaceholder("chat_history"),
         ("human", "{input}"), 
     ])
 
-    question_answer_chain = create_stuff_documents_chain(llm, prompt)
-    rag_chain = create_retrieval_chain(retriever, question_answer_chain)
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
     print("=" * 50)
     print("\nSISTEMA PRONTO!\n")
     print("Fai le tue domande sul PDF. Digita 'esci' per chiudere il programma.")
     print("=" * 50)
+
+    chat_history = []
+
     while True:
         domanda = input("Domanda: ")
         if domanda == "esci":
@@ -62,7 +85,10 @@ def main():
         print("Generazione della risposta in corso (potrebbe richiedere qualche secondo)...\n")
 
         # Interroghiamo il RAG
-        response = rag_chain.invoke({"input": domanda})
+        response = rag_chain.invoke({"input": domanda, "chat_history": chat_history})
+
+        chat_history.append(HumanMessage(content=domanda))
+        chat_history.append(AIMessage(content=response["answer"]))
 
         print("Risposta:")
         print(response["answer"])
