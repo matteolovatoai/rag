@@ -48,7 +48,7 @@ def main():
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", settings.rag_contextualize_q_system_prompt),
+        ("system", settings.rag_contextualize_q_prompt),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"), 
     ])
