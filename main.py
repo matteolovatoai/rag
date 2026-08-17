@@ -1,5 +1,3 @@
-import os
-
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pypdf import PdfReader
@@ -12,17 +10,16 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_classic.chains import create_retrieval_chain, create_history_aware_retriever
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 
+from config import settings
+
 def main():
-    dir_db = "data/chroma_db"
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    # Maximum number of messages to remember (5 human + 5 AI)
-    MAX_LEN_CHAT_HISTORY = 10
-    if os.path.exists(dir_db) and os.listdir(dir_db):
+    embeddings = OllamaEmbeddings(model=settings.embeddings_model)
+    if settings.db_path.exists() and any(settings.db_path.iterdir()):
         print("Chroma database already exists. Skipping creation.")
-        vectorstore = Chroma(persist_directory=dir_db, embedding_function=embeddings)
+        vectorstore = Chroma(persist_directory=str(settings.db_path), embedding_function=embeddings)
     else:
         print("Loading the PDF file...")
-        reader = PdfReader("data/document.pdf")
+        reader = PdfReader(settings.pdf_path)
         docs = []
         for i, page in enumerate(reader.pages, 1):
             text = page.extract_text()
@@ -30,25 +27,18 @@ def main():
                 doc = Document(page_content=text, metadata={"page": i})
                 docs.append(doc)
         print("Splitting the text...")
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap)
         splits = text_splitter.split_documents(docs)
         print("Creating vectorial database...")
-        vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory="data/chroma_db")
+        vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings, persist_directory=str(settings.db_path))
     
     print("Searching...")
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": settings.search_kwargs})
     print("Configuring the LLM...")
     llm = ChatOllama(model="qwen2.5:3b")
-
-    contextualize_q_system_prompt = (
-        "Data la cronologia della chat e l'ultima domanda dell'utente "
-        "che potrebbe fare riferimento al contesto nella cronologia della chat, "
-        "formula una domanda indipendente che possa essere compresa "
-        "senza la cronologia. NON rispondere alla domanda, riformulala solo se necessario."
-    )
-
+    # rewriting the question to inject the history of the chat
     contextualize_q_prompt = ChatPromptTemplate.from_messages([
-        ("system", contextualize_q_system_prompt),
+        ("system", settings.rag_contextualize_q_system_prompt),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"),
     ])
@@ -57,14 +47,8 @@ def main():
         llm, retriever, contextualize_q_prompt
     )
 
-    system_prompt = (
-            "Sei un assistente utile ed esperto. Usa SOLO il seguente contesto per rispondere alla domanda. "
-            "Se non conosci la risposta in base al contesto, dì semplicemente che non lo sai, non inventare nulla.\n\n"
-            "Contesto: {context}"
-        )
-
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
+        ("system", settings.rag_contextualize_q_system_prompt),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"), 
     ])
@@ -92,8 +76,8 @@ def main():
         chat_history.append(HumanMessage(content=domanda))
         chat_history.append(AIMessage(content=response["answer"]))
 
-        if len(chat_history) > MAX_LEN_CHAT_HISTORY:
-            chat_history = chat_history[-MAX_LEN_CHAT_HISTORY:]
+        if len(chat_history) > settings.rag_max_len_chat_history:
+            chat_history = chat_history[-settings.rag_max_len_chat_history:]
 
         print("Risposta:")
         print(response["answer"])
