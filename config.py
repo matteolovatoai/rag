@@ -30,4 +30,8 @@ class Settings(BaseSettings):
         "Se non conosci la risposta in base al contesto, dì semplicemente che non lo sai, non inventare nulla.\n\n"
         "Contesto: {context}"
     )
+
+    class Config:
+        env_file = ".env"
+
 settings = Settings()

@@ -12,3 +12,6 @@ wheels/
 # Data files
 data/**
 !data/.gitkeep
+
+# Environment variables
+.env
