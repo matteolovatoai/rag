@@ -15,6 +15,8 @@ from langchain_classic.chains.combine_documents import create_stuff_documents_ch
 def main():
     dir_db = "data/chroma_db"
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
+    # Maximum number of messages to remember (5 human + 5 AI)
+    MAX_LEN_CHAT_HISTORY = 10
     if os.path.exists(dir_db) and os.listdir(dir_db):
         print("Chroma database already exists. Skipping creation.")
         vectorstore = Chroma(persist_directory=dir_db, embedding_function=embeddings)
@@ -89,6 +91,9 @@ def main():
 
         chat_history.append(HumanMessage(content=domanda))
         chat_history.append(AIMessage(content=response["answer"]))
+
+        if len(chat_history) > MAX_LEN_CHAT_HISTORY:
+            chat_history = chat_history[-MAX_LEN_CHAT_HISTORY:]
 
         print("Risposta:")
         print(response["answer"])
