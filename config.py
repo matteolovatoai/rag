@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     search_kwargs: int = 3
 
     # Settings for the RAG
-    max_history: int = 10
+    max_history: int = 5
     contextualize_system_prompt: str = (
         "Data la cronologia della chat e l'ultima domanda dell'utente "
         "che potrebbe fare riferimento al contesto nella cronologia della chat, "
