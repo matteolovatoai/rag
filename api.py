@@ -6,16 +6,15 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.chains import create_retrieval_chain, create_history_aware_retriever
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 from schemas.chat import ChatRequest, ChatResponse
+from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from pypdf import PdfReader
 
 from config import settings
 
 ml_models = {}
-global_memory = []
 
 def init_rag_engine():
     settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -38,7 +37,7 @@ def init_rag_engine():
     retriever = vectorstore.as_retriever(search_kwargs={"k": settings.search_kwargs})
 
     contextualize_q_prompt = ChatPromptTemplate.from_messages([
-        ("system", settings.rag_contextualize_q_system_prompt),
+        ("system", settings.contextualize_system_prompt),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"),
     ])
@@ -48,7 +47,7 @@ def init_rag_engine():
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", settings.rag_contextualize_q_prompt),
+        ("system", settings.contextualize_prompt),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}"), 
     ])
@@ -68,11 +67,23 @@ app = FastAPI(title="RAG", lifespan=lifespan)
 async def chat_endpoint(request: ChatRequest):
     if "rag_chain" not in ml_models:
         raise HTTPException(status_code=500, detail="RAG engine not initialized")
-    response = ml_models["rag_chain"].invoke({"input": request.query, "chat_history": global_memory})
-    global_memory.append(HumanMessage(content=request.query))
-    global_memory.append(AIMessage(content=response["answer"]))
 
-    if len(global_memory) > settings.rag_max_len_chat_history:
-        del global_memory[:-settings.rag_max_len_chat_history]
+    chain = ml_models["rag_chain"]
+    session_id = request.session_id
+
+    chat_history = RedisChatMessageHistory(
+        session_id=session_id,
+        url=settings.redis_url
+    )
+
+    response = chain.invoke({"input": request.query, "chat_history": chat_history.messages})
+    chat_history.add_user_message(request.query)
+    chat_history.add_ai_message(response["answer"])
+
+    if len(chat_history.messages) > settings.max_history * 2:
+        messages_to_keep = chat_history.messages[-settings.max_history * 2:]
+        chat_history.clear()
+        for msg in messages_to_keep:
+            chat_history.add_message(msg)
 
     return ChatResponse(answer=response["answer"])
